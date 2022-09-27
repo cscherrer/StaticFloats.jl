@@ -1,52 +1,14 @@
-module Static
+module StaticFloats
 
-import IfElse: ifelse
-
-export StaticInt, StaticFloat64, StaticSymbol, True, False, StaticBool, NDIndex
+export StaticFloat64, NDIndex
 export dynamic, is_static, known, static, static_promote
 
-"""
-    StaticSymbol
+abstract type StaticFloat{N} <: Real end
 
-A statically typed `Symbol`.
-"""
-struct StaticSymbol{s}
-    StaticSymbol{s}() where {s} = new{s::Symbol}()
-    StaticSymbol(s::Symbol) = new{s}()
-    StaticSymbol(@nospecialize x::StaticSymbol) = x
-    StaticSymbol(x) = StaticSymbol(Symbol(x))
-    StaticSymbol(x, y) = StaticSymbol(Symbol(x, y))
-    @generated function StaticSymbol(::StaticSymbol{X}, ::StaticSymbol{Y}) where {X, Y}
-        StaticSymbol(Symbol(X, Y))
-    end
-    StaticSymbol(x, y, z...) = StaticSymbol(StaticSymbol(x, y), z...)
-end
 
-Base.Symbol(@nospecialize(s::StaticSymbol)) = known(s)
 
-abstract type StaticNumber{N} <: Number end
 
-abstract type StaticInteger{N} <: StaticNumber{N} end
-
-"""
-    StaticInt(N::Int) -> StaticInt{N}()
-
-A statically sized `Int`.
-Use `StaticInt(N)` instead of `Val(N)` when you want it to behave like a number.
-"""
-struct StaticInt{N} <: StaticInteger{N}
-    StaticInt{N}() where {N} = new{N::Int}()
-    StaticInt(N::Int) = new{N}()
-    StaticInt(@nospecialize N::StaticInt) = N
-    StaticInt(::Val{N}) where {N} = StaticInt(N)
-end
-
-Base.getindex(x::Tuple, ::StaticInt{N}) where {N} = getfield(x, N)
-
-Base.zero(@nospecialize(::StaticInt)) = StaticInt{0}()
-
-Base.to_index(x::StaticInt) = known(x)
-function Base.checkindex(::Type{Bool}, inds::AbstractUnitRange, ::StaticNumber{N}) where {N}
+function Base.checkindex(::Type{Bool}, inds::AbstractUnitRange, ::StaticFloat{N}) where {N}
     checkindex(Bool, inds, N)
 end
 
@@ -54,9 +16,9 @@ end
     StaticFloat64{N}
 
 A statically sized `Float64`.
-Use `StaticInt(N)` instead of `Val(N)` when you want it to behave like a number.
+Use `static(N)` instead of `Val(N)` when you want it to behave like a number.
 """
-struct StaticFloat64{N} <: StaticNumber{N}
+struct StaticFloat64{N} <: StaticFloat{N}
     StaticFloat64{N}() where {N} = new{N::Float64}()
     StaticFloat64(x::Float64) = new{x}()
     StaticFloat64(x::Int) = new{Base.sitofp(Float64, x)::Float64}()
@@ -64,37 +26,10 @@ struct StaticFloat64{N} <: StaticNumber{N}
     StaticFloat64(x::Complex) = StaticFloat64(convert(Float64, x))
 end
 
-"""
-    StaticBool(x::Bool) -> True/False
-
-A statically typed `Bool`.
-"""
-abstract type StaticBool{bool} <: StaticInteger{bool} end
-
-struct True <: StaticBool{true} end
-
-struct False <: StaticBool{false} end
-
-StaticBool{true}() = True()
-StaticBool{false}() = False()
-StaticBool(x::StaticBool) = x
-function StaticBool(x::Bool)
-    if x
-        return True()
-    else
-        return False()
-    end
-end
-
-ifelse(::True, @nospecialize(x), @nospecialize(y)) = x
-ifelse(::False, @nospecialize(x), @nospecialize(y)) = y
-
-const Zero = StaticInt{0}
-const One = StaticInt{1}
 const FloatOne = StaticFloat64{one(Float64)}
 const FloatZero = StaticFloat64{zero(Float64)}
 
-const StaticType{T} = Union{StaticNumber{T}, StaticSymbol{T}}
+const StaticType{T} = Union{StaticFloat{T}, StaticSymbol{T}}
 
 StaticInt(x::False) = Zero()
 StaticInt(x::True) = One()
@@ -202,7 +137,7 @@ static(:x)
 
 ```
 """
-static(@nospecialize(x::Union{StaticSymbol, StaticNumber})) = x
+static(@nospecialize(x::Union{StaticSymbol, StaticFloat})) = x
 static(x::Integer) = StaticInt(x)
 function static(x::Union{AbstractFloat, Complex, Rational, AbstractIrrational})
     StaticFloat64(Float64(x))
@@ -291,82 +226,82 @@ Base.@propagate_inbounds function Base.promote_shape(a::Tuple{Vararg{Union{Int, 
     _promote_shape(a, b)
 end
 
-function Base.promote_rule(@nospecialize(T1::Type{<:StaticNumber}),
-                           @nospecialize(T2::Type{<:StaticNumber}))
+function Base.promote_rule(@nospecialize(T1::Type{<:StaticFloat}),
+                           @nospecialize(T2::Type{<:StaticFloat}))
     promote_rule(eltype(T1), eltype(T2))
 end
 function Base.promote_rule(::Type{<:Base.TwicePrecision{R}},
-                           @nospecialize(T::Type{<:StaticNumber})) where {R <: Number}
+                           @nospecialize(T::Type{<:StaticFloat})) where {R <: Number}
     promote_rule(Base.TwicePrecision{R}, eltype(T))
 end
-function Base.promote_rule(@nospecialize(T1::Type{<:StaticNumber}),
+function Base.promote_rule(@nospecialize(T1::Type{<:StaticFloat}),
                            T2::Type{<:Union{Rational, AbstractFloat, Signed}})
     promote_rule(T2, eltype(T1))
 end
 
-Base.:(~)(::StaticNumber{N}) where {N} = static(~N)
+Base.:(~)(::StaticFloat{N}) where {N} = static(~N)
 
-Base.inv(x::StaticNumber{N}) where {N} = one(x) / x
+Base.inv(x::StaticFloat{N}) where {N} = one(x) / x
 
-@inline Base.one(@nospecialize T::Type{<:StaticNumber}) = static(one(eltype(T)))
-@inline Base.zero(@nospecialize T::Type{<:StaticNumber}) = static(zero(eltype(T)))
+@inline Base.one(@nospecialize T::Type{<:StaticFloat}) = static(one(eltype(T)))
+@inline Base.zero(@nospecialize T::Type{<:StaticFloat}) = static(zero(eltype(T)))
 @inline Base.iszero(::Union{StaticInt{0}, StaticFloat64{0.0}, False}) = true
-@inline Base.iszero(@nospecialize x::StaticNumber) = false
+@inline Base.iszero(@nospecialize x::StaticFloat) = false
 @inline Base.isone(::Union{One, FloatOne, True}) = true
-@inline Base.isone(@nospecialize x::StaticNumber) = false
-@inline Base.iseven(@nospecialize x::StaticNumber) = iseven(known(x))
-@inline Base.isodd(@nospecialize x::StaticNumber) = isodd(known(x))
+@inline Base.isone(@nospecialize x::StaticFloat) = false
+@inline Base.iseven(@nospecialize x::StaticFloat) = iseven(known(x))
+@inline Base.isodd(@nospecialize x::StaticFloat) = isodd(known(x))
 
-Base.AbstractFloat(x::StaticNumber) = StaticFloat64(x)
+Base.AbstractFloat(x::StaticFloat) = StaticFloat64(x)
 
-Base.abs(::StaticNumber{N}) where {N} = static(abs(N))
-Base.abs2(::StaticNumber{N}) where {N} = static(abs2(N))
-Base.sign(::StaticNumber{N}) where {N} = static(sign(N))
+Base.abs(::StaticFloat{N}) where {N} = static(abs(N))
+Base.abs2(::StaticFloat{N}) where {N} = static(abs2(N))
+Base.sign(::StaticFloat{N}) where {N} = static(sign(N))
 
-Base.widen(@nospecialize(x::StaticNumber)) = widen(known(x))
+Base.widen(@nospecialize(x::StaticFloat)) = widen(known(x))
 
-function Base.convert(::Type{T}, @nospecialize(N::StaticNumber)) where {T <: Number}
+function Base.convert(::Type{T}, @nospecialize(N::StaticFloat)) where {T <: Number}
     convert(T, known(N))
 end
 
 #Base.Bool(::StaticInt{N}) where {N} = Bool(N)
 
 Base.Integer(@nospecialize(x::StaticInt)) = x
-(::Type{T})(x::StaticNumber) where {T <: Real} = T(known(x))
-function (@nospecialize(T::Type{<:StaticNumber}))(x::Union{AbstractFloat,
+(::Type{T})(x::StaticFloat) where {T <: Real} = T(known(x))
+function (@nospecialize(T::Type{<:StaticFloat}))(x::Union{AbstractFloat,
                                                            AbstractIrrational, Integer,
                                                            Rational})
     static(convert(eltype(T), x))
 end
 
-@inline Base.:(-)(::StaticNumber{N}) where {N} = static(-N)
+@inline Base.:(-)(::StaticFloat{N}) where {N} = static(-N)
 Base.:(*)(::Union{AbstractFloat, AbstractIrrational, Integer, Rational}, y::Zero) = y
 Base.:(*)(x::Zero, ::Union{AbstractFloat, AbstractIrrational, Integer, Rational}) = x
-Base.:(*)(::StaticNumber{X}, ::StaticNumber{Y}) where {X, Y} = static(X * Y)
-Base.:(/)(::StaticNumber{X}, ::StaticNumber{Y}) where {X, Y} = static(X / Y)
-Base.:(-)(::StaticNumber{X}, ::StaticNumber{Y}) where {X, Y} = static(X - Y)
-Base.:(+)(::StaticNumber{X}, ::StaticNumber{Y}) where {X, Y} = static(X + Y)
+Base.:(*)(::StaticFloat{X}, ::StaticFloat{Y}) where {X, Y} = static(X * Y)
+Base.:(/)(::StaticFloat{X}, ::StaticFloat{Y}) where {X, Y} = static(X / Y)
+Base.:(-)(::StaticFloat{X}, ::StaticFloat{Y}) where {X, Y} = static(X - Y)
+Base.:(+)(::StaticFloat{X}, ::StaticFloat{Y}) where {X, Y} = static(X + Y)
 Base.:(-)(x::Ptr, ::StaticInt{N}) where {N} = x - N
 Base.:(-)(::StaticInt{N}, y::Ptr) where {N} = y - N
 Base.:(+)(x::Ptr, ::StaticInt{N}) where {N} = x + N
 Base.:(+)(::StaticInt{N}, y::Ptr) where {N} = y + N
 
-@generated Base.sqrt(::StaticNumber{N}) where {N} = :($(static(sqrt(N))))
+@generated Base.sqrt(::StaticFloat{N}) where {N} = :($(static(sqrt(N))))
 
-function Base.div(::StaticNumber{X}, ::StaticNumber{Y}, m::RoundingMode) where {X, Y}
+function Base.div(::StaticFloat{X}, ::StaticFloat{Y}, m::RoundingMode) where {X, Y}
     static(div(X, Y, m))
 end
-Base.div(x::Real, ::StaticNumber{Y}, m::RoundingMode) where {Y} = div(x, Y, m)
-Base.div(::StaticNumber{X}, y::Real, m::RoundingMode) where {X} = div(X, y, m)
+Base.div(x::Real, ::StaticFloat{Y}, m::RoundingMode) where {Y} = div(x, Y, m)
+Base.div(::StaticFloat{X}, y::Real, m::RoundingMode) where {X} = div(X, y, m)
 Base.div(x::StaticBool, y::False) = throw(DivideError())
 Base.div(x::StaticBool, y::True) = x
 
-Base.rem(@nospecialize(x::StaticNumber), T::Type{<:Integer}) = rem(known(x), T)
-Base.rem(::StaticNumber{X}, ::StaticNumber{Y}) where {X, Y} = static(rem(X, Y))
-Base.rem(x::Real, ::StaticNumber{Y}) where {Y} = rem(x, Y)
-Base.rem(::StaticNumber{X}, y::Real) where {X} = rem(X, y)
+Base.rem(@nospecialize(x::StaticFloat), T::Type{<:Integer}) = rem(known(x), T)
+Base.rem(::StaticFloat{X}, ::StaticFloat{Y}) where {X, Y} = static(rem(X, Y))
+Base.rem(x::Real, ::StaticFloat{Y}) where {Y} = rem(x, Y)
+Base.rem(::StaticFloat{X}, y::Real) where {X} = rem(X, y)
 
-Base.mod(::StaticNumber{X}, ::StaticNumber{Y}) where {X, Y} = static(mod(X, Y))
+Base.mod(::StaticFloat{X}, ::StaticFloat{Y}) where {X, Y} = static(mod(X, Y))
 
 Base.round(::StaticFloat64{M}) where {M} = StaticFloat64(round(M))
 roundtostaticint(::StaticFloat64{M}) where {M} = StaticInt(round(Int, M))
@@ -374,23 +309,23 @@ roundtostaticint(x::AbstractFloat) = round(Int, x)
 floortostaticint(::StaticFloat64{M}) where {M} = StaticInt(Base.fptosi(Int, M))
 floortostaticint(x::AbstractFloat) = Base.fptosi(Int, x)
 
-Base.:(==)(::StaticNumber{X}, ::StaticNumber{Y}) where {X, Y} = ==(X, Y)
+Base.:(==)(::StaticFloat{X}, ::StaticFloat{Y}) where {X, Y} = ==(X, Y)
 
-Base.:(<)(::StaticNumber{X}, ::StaticNumber{Y}) where {X, Y} = <(X, Y)
+Base.:(<)(::StaticFloat{X}, ::StaticFloat{Y}) where {X, Y} = <(X, Y)
 
-Base.isless(::StaticNumber{X}, ::StaticNumber{Y}) where {X, Y} = isless(X, Y)
-Base.isless(::StaticNumber{X}, y::Real) where {X} = isless(X, y)
+Base.isless(::StaticFloat{X}, ::StaticFloat{Y}) where {X, Y} = isless(X, Y)
+Base.isless(::StaticFloat{X}, y::Real) where {X} = isless(X, y)
 Base.isless(x::Real, ::StaticInteger{Y}) where {Y} = isless(x, Y)
 
-Base.min(::StaticNumber{X}, ::StaticNumber{Y}) where {X, Y} = static(min(X, Y))
-Base.min(::StaticNumber{X}, y::Number) where {X} = min(X, y)
-Base.min(x::Number, ::StaticNumber{Y}) where {Y} = min(x, Y)
+Base.min(::StaticFloat{X}, ::StaticFloat{Y}) where {X, Y} = static(min(X, Y))
+Base.min(::StaticFloat{X}, y::Number) where {X} = min(X, y)
+Base.min(x::Number, ::StaticFloat{Y}) where {Y} = min(x, Y)
 
-Base.max(::StaticNumber{X}, ::StaticNumber{Y}) where {X, Y} = static(max(X, Y))
-Base.max(::StaticNumber{X}, y::Number) where {X} = max(X, y)
-Base.max(x::Number, ::StaticNumber{Y}) where {Y} = max(x, Y)
+Base.max(::StaticFloat{X}, ::StaticFloat{Y}) where {X, Y} = static(max(X, Y))
+Base.max(::StaticFloat{X}, y::Number) where {X} = max(X, y)
+Base.max(x::Number, ::StaticFloat{Y}) where {Y} = max(x, Y)
 
-Base.minmax(::StaticNumber{X}, ::StaticNumber{Y}) where {X, Y} = static(minmax(X, Y))
+Base.minmax(::StaticFloat{X}, ::StaticFloat{Y}) where {X, Y} = static(minmax(X, Y))
 
 Base.:(<<)(::StaticInteger{X}, ::StaticInteger{Y}) where {X, Y} = static(<<(X, Y))
 Base.:(<<)(::StaticInteger{X}, n::Integer) where {X} = <<(X, n)
@@ -435,9 +370,9 @@ Base.any(::Tuple{Vararg{True}}) = true
 Base.any(::Tuple{Vararg{Union{True, False}}}) = true
 Base.any(::Tuple{Vararg{False}}) = false
 
-Base.real(@nospecialize(x::StaticNumber)) = x
-Base.real(@nospecialize(T::Type{<:StaticNumber})) = eltype(T)
-Base.imag(@nospecialize(x::StaticNumber)) = zero(x)
+Base.real(@nospecialize(x::StaticFloat)) = x
+Base.real(@nospecialize(T::Type{<:StaticFloat})) = eltype(T)
+Base.imag(@nospecialize(x::StaticFloat)) = zero(x)
 
 """
     field_type(::Type{T}, f)
@@ -499,31 +434,9 @@ Base.asec(x::StaticFloat64{M}) where {M} = acos(inv(x))
 Base.acsc(x::StaticFloat64{M}) where {M} = asin(inv(x))
 Base.acot(x::StaticFloat64{M}) where {M} = atan(inv(x))
 
-@inline Base.exponent(::StaticNumber{M}) where {M} = static(exponent(M))
+@inline Base.exponent(::StaticFloat{M}) where {M} = static(exponent(M))
 
 Base.:(^)(::StaticFloat64{x}, y::Float64) where {x} = exp2(log2(x) * y)
-
-Base.:(+)(x::True) = One()
-Base.:(+)(x::False) = Zero()
-
-# from `^(x::Bool, y::Bool) = x | !y`
-Base.:(^)(x::StaticBool, y::False) = True()
-Base.:(^)(x::StaticBool, y::True) = x
-Base.:(^)(x::Integer, y::False) = one(x)
-Base.:(^)(x::Integer, y::True) = x
-Base.:(^)(x::BigInt, y::False) = one(x)
-Base.:(^)(x::BigInt, y::True) = x
-
-@inline function Base.ntuple(f::F, ::StaticInt{N}) where {F, N}
-    (N >= 0) || throw(ArgumentError(string("tuple length should be ≥ 0, got ", N)))
-    if @generated
-        quote
-            Base.Cartesian.@ntuple $N i->f(i)
-        end
-    else
-        Tuple(f(i) for i in 1:N)
-    end
-end
 
 @inline function invariant_permutation(@nospecialize(x::Tuple), @nospecialize(y::Tuple))
     if y === x === ntuple(static, StaticInt(nfields(x)))
@@ -929,11 +842,11 @@ end
     return (Base.to_index(A, I[1]), to_indices(A, indstail, Base.tail(I))...)
 end
 
-function Base.show(io::IO, @nospecialize(x::Union{StaticNumber, StaticSymbol, NDIndex}))
+function Base.show(io::IO, @nospecialize(x::Union{StaticFloat, StaticSymbol, NDIndex}))
     show(io, MIME"text/plain"(), x)
 end
 function Base.show(io::IO, ::MIME"text/plain",
-                   @nospecialize(x::Union{StaticNumber, StaticSymbol}))
+                   @nospecialize(x::Union{StaticFloat, StaticSymbol}))
     print(io, "static(" * repr(known(typeof(x))) * ")")
 end
 function Base.show(io::IO, m::MIME"text/plain", @nospecialize(x::NDIndex))
