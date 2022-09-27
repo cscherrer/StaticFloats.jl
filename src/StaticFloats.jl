@@ -3,10 +3,9 @@ module StaticFloats
 export StaticFloat64, NDIndex
 export dynamic, is_static, known, static, static_promote
 
+using Static
+
 abstract type StaticFloat{N} <: Real end
-
-
-
 
 function Base.checkindex(::Type{Bool}, inds::AbstractUnitRange, ::StaticFloat{N}) where {N}
     checkindex(Bool, inds, N)
@@ -31,59 +30,9 @@ const FloatZero = StaticFloat64{zero(Float64)}
 
 const StaticType{T} = Union{StaticFloat{T}, StaticSymbol{T}}
 
-StaticInt(x::False) = Zero()
-StaticInt(x::True) = One()
-Base.Bool(::True) = true
-Base.Bool(::False) = false
-
 Base.eltype(@nospecialize(T::Type{<:StaticFloat64})) = Float64
-Base.eltype(@nospecialize(T::Type{<:StaticInt})) = Int
-Base.eltype(@nospecialize(T::Type{<:StaticBool})) = Bool
 
-"""
-    NDIndex(i, j, k...)   -> I
-    NDIndex((i, j, k...)) -> I
 
-A multidimensional index that refers to a single element. Each dimension is represented by
-a single `Int` or `StaticInt`.
-
-```julia
-julia> using Static
-
-julia> i = NDIndex(static(1), 2, static(3))
-NDIndex(static(1), 2, static(3))
-
-julia> i[static(1)]
-static(1)
-
-julia> i[1]
-1
-
-```
-"""
-struct NDIndex{N, I <: Tuple{Vararg{Union{StaticInt, Int}, N}}} <:
-       Base.AbstractCartesianIndex{N}
-    index::I
-
-    NDIndex{N}(i::Tuple{Vararg{Union{StaticInt, Int}, N}}) where {N} = new{N, typeof(i)}(i)
-    NDIndex{N}(index::Tuple) where {N} = _ndindex(static(N), _flatten(index...))
-    NDIndex{N}(index...) where {N} = NDIndex{N}(index)
-
-    NDIndex{0}(::Tuple{}) = new{0, Tuple{}}(())
-    NDIndex{0}() = NDIndex{0}(())
-
-    NDIndex(i::Tuple{Vararg{Union{StaticInt, Int}, N}}) where {N} = new{N, typeof(i)}(i)
-    NDIndex(i::Vararg{Union{StaticInt, Int}, N}) where {N} = NDIndex(i)
-
-    NDIndex(index::Tuple) = NDIndex(_flatten(index...))
-    NDIndex(index...) = NDIndex(index)
-end
-
-_ndindex(n::StaticInt{N}, i::Tuple{Vararg{Union{Int, StaticInt}, N}}) where {N} = NDIndex(i)
-function _ndindex(n::StaticInt{N}, i::Tuple{Vararg{Any, M}}) where {N, M}
-    M > N && throw(ArgumentError("input tuple of length $M, requested $N"))
-    return NDIndex(_fill_to_length(i, n))
-end
 _fill_to_length(x::Tuple{Vararg{Any, N}}, n::StaticInt{N}) where {N} = x
 @inline function _fill_to_length(x::Tuple{Vararg{Any, M}}, n::StaticInt{N}) where {M, N}
     return _fill_to_length((x..., static(1)), n)
@@ -97,7 +46,6 @@ _flatten(i::Base.AbstractCartesianIndex) = _flatten(Tuple(i)...)
 @inline function _flatten(i::Base.AbstractCartesianIndex, I...)
     return (_flatten(Tuple(i)...)..., _flatten(I...)...)
 end
-Base.Tuple(@nospecialize(x::NDIndex)) = getfield(x, :index)
 
 """
     known(::Type{T})
@@ -219,12 +167,6 @@ end
 Base.@propagate_inbounds function _promote_shape(a::Tuple{A}, ::Tuple{}) where {A}
     (static_promote(static(1), getfield(a, 1)),)
 end
-Base.@propagate_inbounds function Base.promote_shape(a::Tuple{Vararg{Union{Int, StaticInt}}
-                                                              },
-                                                     b::Tuple{Vararg{Union{Int, StaticInt}}
-                                                              })
-    _promote_shape(a, b)
-end
 
 function Base.promote_rule(@nospecialize(T1::Type{<:StaticFloat}),
                            @nospecialize(T2::Type{<:StaticFloat}))
@@ -245,9 +187,9 @@ Base.inv(x::StaticFloat{N}) where {N} = one(x) / x
 
 @inline Base.one(@nospecialize T::Type{<:StaticFloat}) = static(one(eltype(T)))
 @inline Base.zero(@nospecialize T::Type{<:StaticFloat}) = static(zero(eltype(T)))
-@inline Base.iszero(::Union{StaticInt{0}, StaticFloat64{0.0}, False}) = true
+@inline Base.iszero(::StaticFloat64{0.0}) = true
 @inline Base.iszero(@nospecialize x::StaticFloat) = false
-@inline Base.isone(::Union{One, FloatOne, True}) = true
+@inline Base.isone(::Union{FloatOne}) = true
 @inline Base.isone(@nospecialize x::StaticFloat) = false
 @inline Base.iseven(@nospecialize x::StaticFloat) = iseven(known(x))
 @inline Base.isodd(@nospecialize x::StaticFloat) = isodd(known(x))
@@ -275,16 +217,10 @@ function (@nospecialize(T::Type{<:StaticFloat}))(x::Union{AbstractFloat,
 end
 
 @inline Base.:(-)(::StaticFloat{N}) where {N} = static(-N)
-Base.:(*)(::Union{AbstractFloat, AbstractIrrational, Integer, Rational}, y::Zero) = y
-Base.:(*)(x::Zero, ::Union{AbstractFloat, AbstractIrrational, Integer, Rational}) = x
 Base.:(*)(::StaticFloat{X}, ::StaticFloat{Y}) where {X, Y} = static(X * Y)
 Base.:(/)(::StaticFloat{X}, ::StaticFloat{Y}) where {X, Y} = static(X / Y)
 Base.:(-)(::StaticFloat{X}, ::StaticFloat{Y}) where {X, Y} = static(X - Y)
 Base.:(+)(::StaticFloat{X}, ::StaticFloat{Y}) where {X, Y} = static(X + Y)
-Base.:(-)(x::Ptr, ::StaticInt{N}) where {N} = x - N
-Base.:(-)(::StaticInt{N}, y::Ptr) where {N} = y - N
-Base.:(+)(x::Ptr, ::StaticInt{N}) where {N} = x + N
-Base.:(+)(::StaticInt{N}, y::Ptr) where {N} = y + N
 
 @generated Base.sqrt(::StaticFloat{N}) where {N} = :($(static(sqrt(N))))
 
@@ -293,8 +229,6 @@ function Base.div(::StaticFloat{X}, ::StaticFloat{Y}, m::RoundingMode) where {X,
 end
 Base.div(x::Real, ::StaticFloat{Y}, m::RoundingMode) where {Y} = div(x, Y, m)
 Base.div(::StaticFloat{X}, y::Real, m::RoundingMode) where {X} = div(X, y, m)
-Base.div(x::StaticBool, y::False) = throw(DivideError())
-Base.div(x::StaticBool, y::True) = x
 
 Base.rem(@nospecialize(x::StaticFloat), T::Type{<:Integer}) = rem(known(x), T)
 Base.rem(::StaticFloat{X}, ::StaticFloat{Y}) where {X, Y} = static(rem(X, Y))
@@ -315,7 +249,6 @@ Base.:(<)(::StaticFloat{X}, ::StaticFloat{Y}) where {X, Y} = <(X, Y)
 
 Base.isless(::StaticFloat{X}, ::StaticFloat{Y}) where {X, Y} = isless(X, Y)
 Base.isless(::StaticFloat{X}, y::Real) where {X} = isless(X, y)
-Base.isless(x::Real, ::StaticInteger{Y}) where {Y} = isless(x, Y)
 
 Base.min(::StaticFloat{X}, ::StaticFloat{Y}) where {X, Y} = static(min(X, Y))
 Base.min(::StaticFloat{X}, y::Number) where {X} = min(X, y)
@@ -326,49 +259,6 @@ Base.max(::StaticFloat{X}, y::Number) where {X} = max(X, y)
 Base.max(x::Number, ::StaticFloat{Y}) where {Y} = max(x, Y)
 
 Base.minmax(::StaticFloat{X}, ::StaticFloat{Y}) where {X, Y} = static(minmax(X, Y))
-
-Base.:(<<)(::StaticInteger{X}, ::StaticInteger{Y}) where {X, Y} = static(<<(X, Y))
-Base.:(<<)(::StaticInteger{X}, n::Integer) where {X} = <<(X, n)
-Base.:(<<)(x::Integer, ::StaticInteger{N}) where {N} = <<(x, N)
-
-Base.:(>>)(::StaticInteger{X}, ::StaticInteger{Y}) where {X, Y} = static(>>(X, Y))
-Base.:(>>)(::StaticInteger{X}, n::Integer) where {X} = >>(X, n)
-Base.:(>>)(x::Integer, ::StaticInteger{N}) where {N} = >>(x, N)
-
-Base.:(>>>)(::StaticInteger{X}, ::StaticInteger{Y}) where {X, Y} = static(>>>(X, Y))
-Base.:(>>>)(::StaticInteger{X}, n::Integer) where {X} = >>>(X, n)
-Base.:(>>>)(x::Integer, ::StaticInteger{N}) where {N} = >>>(x, N)
-
-Base.:(&)(::StaticInteger{X}, ::StaticInteger{Y}) where {X, Y} = static(X & Y)
-Base.:(&)(::StaticInteger{X}, y::Union{Integer, Missing}) where {X} = X & y
-Base.:(&)(x::Union{Integer, Missing}, ::StaticInteger{Y}) where {Y} = x & Y
-Base.:(&)(x::Bool, y::True) = x
-Base.:(&)(x::Bool, y::False) = y
-Base.:(&)(x::True, y::Bool) = y
-Base.:(&)(x::False, y::Bool) = x
-
-Base.:(|)(::StaticInteger{X}, ::StaticInteger{Y}) where {X, Y} = static(|(X, Y))
-Base.:(|)(::StaticInteger{X}, y::Union{Integer, Missing}) where {X} = X | y
-Base.:(|)(x::Union{Integer, Missing}, ::StaticInteger{Y}) where {Y} = x | Y
-Base.:(|)(x::Bool, y::True) = y
-Base.:(|)(x::Bool, y::False) = x
-Base.:(|)(x::True, y::Bool) = x
-Base.:(|)(x::False, y::Bool) = y
-
-Base.xor(::StaticInteger{X}, ::StaticInteger{Y}) where {X, Y} = static(xor(X, Y))
-Base.xor(::StaticInteger{X}, y::Union{Integer, Missing}) where {X} = xor(X, y)
-Base.xor(x::Union{Integer, Missing}, ::StaticInteger{Y}) where {Y} = xor(x, Y)
-
-Base.:(!)(::True) = False()
-Base.:(!)(::False) = True()
-
-Base.all(::Tuple{Vararg{True}}) = true
-Base.all(::Tuple{Vararg{Union{True, False}}}) = false
-Base.all(::Tuple{Vararg{False}}) = false
-
-Base.any(::Tuple{Vararg{True}}) = true
-Base.any(::Tuple{Vararg{Union{True, False}}}) = true
-Base.any(::Tuple{Vararg{False}}) = false
 
 Base.real(@nospecialize(x::StaticFloat)) = x
 Base.real(@nospecialize(T::Type{<:StaticFloat})) = eltype(T)
@@ -509,141 +399,6 @@ value is a `StaticInt`.
     end
 end
 
-function Base.invperm(p::Tuple{StaticInt, Vararg{StaticInt, N}}) where {N}
-    map(Base.Fix2(find_first_eq, p), ntuple(static, StaticInt(N + 1)))
-end
-
-"""
-  reduce_tup(f::F, inds::Tuple{Vararg{Any,N}}) where {F,N}
-
-An optimized `reduce` for tuples. `Base.reduce`'s `afoldl` will often not inline.
-Additionally, `reduce_tup` attempts to order the reduction in an optimal manner.
-
-```julia
-julia> using StaticArrays, Static, BenchmarkTools
-
-julia> rsum(v::SVector) = Static.reduce_tup(+, v.data)
-rsum (generic function with 2 methods)
-
-julia> for n ∈ 2:16
-           @show n
-           v = @SVector rand(n)
-           s1 = @btime  sum(\$(Ref(v))[])
-           s2 = @btime rsum(\$(Ref(v))[])
-       end
-n = 2
-  0.863 ns (0 allocations: 0 bytes)
-  0.863 ns (0 allocations: 0 bytes)
-n = 3
-  0.862 ns (0 allocations: 0 bytes)
-  0.863 ns (0 allocations: 0 bytes)
-n = 4
-  0.862 ns (0 allocations: 0 bytes)
-  0.862 ns (0 allocations: 0 bytes)
-n = 5
-  1.074 ns (0 allocations: 0 bytes)
-  0.864 ns (0 allocations: 0 bytes)
-n = 6
-  0.864 ns (0 allocations: 0 bytes)
-  0.862 ns (0 allocations: 0 bytes)
-n = 7
-  1.075 ns (0 allocations: 0 bytes)
-  0.864 ns (0 allocations: 0 bytes)
-n = 8
-  1.077 ns (0 allocations: 0 bytes)
-  0.865 ns (0 allocations: 0 bytes)
-n = 9
-  1.081 ns (0 allocations: 0 bytes)
-  0.865 ns (0 allocations: 0 bytes)
-n = 10
-  1.195 ns (0 allocations: 0 bytes)
-  0.867 ns (0 allocations: 0 bytes)
-n = 11
-  1.357 ns (0 allocations: 0 bytes)
-  1.400 ns (0 allocations: 0 bytes)
-n = 12
-  1.543 ns (0 allocations: 0 bytes)
-  1.074 ns (0 allocations: 0 bytes)
-n = 13
-  1.702 ns (0 allocations: 0 bytes)
-  1.077 ns (0 allocations: 0 bytes)
-n = 14
-  1.913 ns (0 allocations: 0 bytes)
-  0.867 ns (0 allocations: 0 bytes)
-n = 15
-  2.076 ns (0 allocations: 0 bytes)
-  1.077 ns (0 allocations: 0 bytes)
-n = 16
-  2.273 ns (0 allocations: 0 bytes)
-  1.078 ns (0 allocations: 0 bytes)
-```
-
-More importantly, `reduce_tup(_pick_range, inds)` often performs better than `reduce(_pick_range, inds)`.
-```julia
-julia> using ArrayInterface, BenchmarkTools, Static
-
-julia> inds = (Base.OneTo(100), 1:100, 1:static(100))
-(Base.OneTo(100), 1:100, 1:static(100))
-
-julia> @btime reduce(ArrayInterface._pick_range, \$(Ref(inds))[])
-  6.405 ns (0 allocations: 0 bytes)
-Base.Slice(static(1):static(100))
-
-julia> @btime Static.reduce_tup(ArrayInterface._pick_range, \$(Ref(inds))[])
-  2.570 ns (0 allocations: 0 bytes)
-Base.Slice(static(1):static(100))
-
-julia> inds = (Base.OneTo(100), 1:100, 1:UInt(100))
-(Base.OneTo(100), 1:100, 0x0000000000000001:0x0000000000000064)
-
-julia> @btime reduce(ArrayInterface._pick_range, \$(Ref(inds))[])
-  6.411 ns (0 allocations: 0 bytes)
-Base.Slice(static(1):100)
-
-julia> @btime Static.reduce_tup(ArrayInterface._pick_range, \$(Ref(inds))[])
-  2.592 ns (0 allocations: 0 bytes)
-Base.Slice(static(1):100)
-
-julia> inds = (Base.OneTo(100), 1:100, 1:UInt(100), Int32(1):Int32(100))
-(Base.OneTo(100), 1:100, 0x0000000000000001:0x0000000000000064, 1:100)
-
-julia> @btime reduce(ArrayInterface._pick_range, \$(Ref(inds))[])
-  9.048 ns (0 allocations: 0 bytes)
-Base.Slice(static(1):100)
-
-julia> @btime Static.reduce_tup(ArrayInterface._pick_range, \$(Ref(inds))[])
-  2.569 ns (0 allocations: 0 bytes)
-Base.Slice(static(1):100)
-```
-"""
-@generated function reduce_tup(f::F, inds::Tuple{Vararg{Any, N}}) where {F, N}
-    q = Expr(:block, Expr(:meta, :inline, :propagate_inbounds))
-    if N == 1
-        push!(q.args, :(inds[1]))
-        return q
-    end
-    syms = Vector{Symbol}(undef, N)
-    i = 0
-    for n in 1:N
-        syms[n] = iₙ = Symbol(:i_, (i += 1))
-        push!(q.args, Expr(:(=), iₙ, Expr(:ref, :inds, n)))
-    end
-    W = 1 << (8sizeof(N) - 2 - leading_zeros(N))
-    while W > 0
-        _N = length(syms)
-        for _ in (2W):W:_N
-            for w in 1:W
-                new_sym = Symbol(:i_, (i += 1))
-                push!(q.args, Expr(:(=), new_sym, Expr(:call, :f, syms[w], syms[w + W])))
-                syms[w] = new_sym
-            end
-            deleteat!(syms, (1 + W):(2W))
-        end
-        W >>>= 1
-    end
-    q
-end
-
 # This method assumes that `f` uetrieves compile time information and `g` is the fall back
 # for the corresponding dynamic method. If the `f(x)` doesn't return `nothing` that means
 # the value is known and compile time and returns `static(f(x))`.
@@ -722,21 +477,6 @@ add(x) = Base.Fix2(+, x)
 
 const Mul{X} = Base.Fix2{typeof(*), X}
 const Add{X} = Base.Fix2{typeof(+), X}
-
-Base.:∘(::Add{StaticInt{X}}, ::Add{StaticInt{Y}}) where {X, Y} = Base.Fix2(+, static(X + Y))
-Base.:∘(x::Mul{Int}, ::Add{StaticInt{0}}) = x
-Base.:∘(x::Mul{StaticInt{X}}, ::Add{StaticInt{0}}) where {X} = x
-Base.:∘(x::Mul{StaticInt{0}}, ::Add{StaticInt{0}}) = x
-Base.:∘(x::Mul{StaticInt{1}}, ::Add{StaticInt{0}}) = x
-Base.:∘(x::Mul{StaticInt{0}}, y::Add{StaticInt{Y}}) where {Y} = x
-Base.:∘(::Mul{StaticInt{1}}, y::Add{StaticInt{Y}}) where {Y} = y
-Base.:∘(x::Mul{StaticInt{0}}, y::Add{Int}) = x
-Base.:∘(::Mul{StaticInt{1}}, y::Add{Int}) = y
-Base.:∘(::Mul{StaticInt{X}}, ::Mul{StaticInt{Y}}) where {X, Y} = Base.Fix2(*, static(X * Y))
-Base.:∘(x::Mul{StaticInt{0}}, y::Mul{Int}) = x
-Base.:∘(::Mul{Int}, y::Mul{StaticInt{0}}) = y
-Base.:∘(::Mul{StaticInt{1}}, y::Mul{Int}) = y
-Base.:∘(x::Mul{Int}, ::Mul{StaticInt{1}}) = x
 
 # length
 Base.length(@nospecialize(x::NDIndex))::Int = length(Tuple(x))
@@ -826,21 +566,7 @@ _icmp(x::Bool, a, b) = ifelse(x, 1, __icmp(a == b))
 __icmp(x::StaticBool) = ifelse(x, static(0), static(-1))
 __icmp(x::Bool) = ifelse(x, 0, -1)
 
-#  Necessary for compatibility with Base
-# In simple cases, we know that we don't need to use axes(A). Optimize those
-# until Julia gets smart enough to elide the call on its own:
-@inline function Base.to_indices(A, inds, I::Tuple{NDIndex, Vararg{Any}})
-    to_indices(A, inds, (Tuple(I[1])..., Base.tail(I)...))
-end
-# But for arrays of CartesianIndex, we just skip the appropriate number of inds
-@inline function Base.to_indices(A, inds,
-                                 I::Tuple{AbstractArray{NDIndex{N, J}}, Vararg{Any}}) where {
-                                                                                             N,
-                                                                                             J
-                                                                                             }
-    _, indstail = Base.IteratorsMD.split(inds, Val(N))
-    return (Base.to_index(A, I[1]), to_indices(A, indstail, Base.tail(I))...)
-end
+
 
 function Base.show(io::IO, @nospecialize(x::Union{StaticFloat, StaticSymbol, NDIndex}))
     show(io, MIME"text/plain"(), x)
