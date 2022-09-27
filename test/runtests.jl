@@ -1,4 +1,5 @@
-using Static, StaticFloats, Aqua
+using StaticFloats, Aqua
+import Static
 using Test
 
 Aqua.test_all(Static)

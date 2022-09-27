@@ -3,7 +3,8 @@ module StaticFloats
 export StaticFloat64, NDIndex
 export dynamic, is_static, known, static, static_promote
 
-using Static
+using Static: StaticInt
+import Static
 
 abstract type StaticFloat{N} <: Real end
 
@@ -27,8 +28,6 @@ end
 
 const FloatOne = StaticFloat64{one(Float64)}
 const FloatZero = StaticFloat64{zero(Float64)}
-
-const StaticType{T} = Union{StaticFloat{T}, StaticSymbol{T}}
 
 Base.eltype(@nospecialize(T::Type{<:StaticFloat64})) = Float64
 
@@ -55,13 +54,12 @@ Returns the known value corresponding to a static type `T`. If `T` is not a stat
 
 See also: [`static`](@ref), [`is_static`](@ref)
 """
-known(::Type{<:StaticType{T}}) where {T} = T
+known(::Type{<:StaticFloat{T}}) where {T} = T
 known(::Type{Val{V}}) where {V} = V
 _get_known(::Type{T}, dim::StaticInt{D}) where {T, D} = known(field_type(T, dim))
 known(@nospecialize(T::Type{<:Tuple})) = eachop(_get_known, nstatic(Val(fieldcount(T))), T)
 known(T::DataType) = nothing
 known(@nospecialize(x)) = known(typeof(x))
-known(@nospecialize(T::Type{<:NDIndex})) = known(T.parameters[2])
 
 """
     static(x)
@@ -85,50 +83,21 @@ static(:x)
 
 ```
 """
-static(@nospecialize(x::Union{StaticSymbol, StaticFloat})) = x
+static(@nospecialize(x::StaticFloat)) = x
 static(x::Integer) = StaticInt(x)
 function static(x::Union{AbstractFloat, Complex, Rational, AbstractIrrational})
     StaticFloat64(Float64(x))
 end
-static(x::Bool) = StaticBool(x)
-static(x::Union{Symbol, AbstractChar, AbstractString}) = StaticSymbol(x)
+static(x) = Static.static(x)
 static(x::Tuple{Vararg{Any}}) = map(static, x)
 static(::Val{V}) where {V} = static(V)
-static(x::CartesianIndex) = NDIndex(static(Tuple(x)))
-function static(x::X) where {X}
-    Base.issingletontype(X) && return x
-    error("There is no static alternative for type $(typeof(x)).")
-end
 
-"""
-    is_static(::Type{T}) -> StaticBool
+Static.is_static(@nospecialize(x::Type{<:StaticFloat})) = Static.True()
 
-Returns `True` if `T` is a static type.
+@inline Static.dynamic(@nospecialize x::StaticFloat) = known(x)
 
-See also: [`static`](@ref), [`known`](@ref)
-"""
-is_static(@nospecialize(x)) = is_static(typeof(x))
-is_static(@nospecialize(x::Type{<:StaticType})) = True()
-is_static(@nospecialize(x::Type{<:Val})) = True()
-_tuple_static(::Type{T}, i) where {T} = is_static(field_type(T, i))
-@inline function is_static(@nospecialize(T::Type{<:Tuple}))
-    if all(eachop(_tuple_static, nstatic(Val(fieldcount(T))), T))
-        return True()
-    else
-        return False()
-    end
-end
-is_static(T::DataType) = False()
 
-"""
-    dynamic(x)
-
-Returns the "dynamic" or non-static form of `x`.
-"""
-@inline dynamic(@nospecialize x::StaticType) = known(x)
-@inline dynamic(@nospecialize x::Tuple) = map(dynamic, x)
-dynamic(@nospecialize(x::NDIndex)) = CartesianIndex(dynamic(Tuple(x)))
-dynamic(@nospecialize x) = x
+StaticType{X} = Union{StaticFloat{X}, Static.StaticType{X}}
 
 """
     static_promote(x, y)
@@ -208,7 +177,6 @@ end
 
 #Base.Bool(::StaticInt{N}) where {N} = Bool(N)
 
-Base.Integer(@nospecialize(x::StaticInt)) = x
 (::Type{T})(x::StaticFloat) where {T <: Real} = T(known(x))
 function (@nospecialize(T::Type{<:StaticFloat}))(x::Union{AbstractFloat,
                                                            AbstractIrrational, Integer,
@@ -263,15 +231,6 @@ Base.minmax(::StaticFloat{X}, ::StaticFloat{Y}) where {X, Y} = static(minmax(X, 
 Base.real(@nospecialize(x::StaticFloat)) = x
 Base.real(@nospecialize(T::Type{<:StaticFloat})) = eltype(T)
 Base.imag(@nospecialize(x::StaticFloat)) = zero(x)
-
-"""
-    field_type(::Type{T}, f)
-
-Functionally equivalent to `fieldtype(T, f)` except `f` may be a static type.
-"""
-@inline field_type(T::Type, f::Union{Int, Symbol}) = fieldtype(T, f)
-@inline field_type(::Type{T}, ::StaticInt{N}) where {T, N} = fieldtype(T, N)
-@inline field_type(::Type{T}, ::StaticSymbol{S}) where {T, S} = fieldtype(T, S)
 
 Base.rad2deg(::StaticFloat64{M}) where {M} = StaticFloat64(rad2deg(M))
 Base.deg2rad(::StaticFloat64{M}) where {M} = StaticFloat64(deg2rad(M))
@@ -478,71 +437,6 @@ add(x) = Base.Fix2(+, x)
 const Mul{X} = Base.Fix2{typeof(*), X}
 const Add{X} = Base.Fix2{typeof(+), X}
 
-# length
-Base.length(@nospecialize(x::NDIndex))::Int = length(Tuple(x))
-Base.length(::Type{<:NDIndex{N}}) where {N} = N
-
-# indexing
-Base.@propagate_inbounds function Base.getindex(x::NDIndex{N, T}, i::Int)::Int where {N, T}
-    return Int(getfield(Tuple(x), i))
-end
-Base.@propagate_inbounds function Base.getindex(x::NDIndex{N, T},
-                                                i::StaticInt{I}) where {N, T, I}
-    return getfield(Tuple(x), I)
-end
-
-# Base.get(A::AbstractArray, I::CartesianIndex, default) = get(A, I.I, default)
-# eltype(::Type{T}) where {T<:CartesianIndex} = eltype(fieldtype(T, :I))
-
-Base.setindex(x::NDIndex, i, j) = NDIndex(Base.setindex(Tuple(x), i, j))
-
-# equality
-Base.:(==)(@nospecialize(x::NDIndex), @nospecialize(y::NDIndex)) = ==(Tuple(x), Tuple(y))
-
-# zeros and ones
-Base.zero(@nospecialize(x::NDIndex)) = zero(typeof(x))
-function Base.zero(@nospecialize(T::Type{<:NDIndex}))
-    NDIndex(ntuple(_ -> static(0), Val(length(T))))
-end
-Base.oneunit(@nospecialize(x::NDIndex)) = oneunit(typeof(x))
-function Base.oneunit(@nospecialize(T::Type{<:NDIndex}))
-    NDIndex(ntuple(_ -> static(1), Val(length(T))))
-end
-
-@inline function Base.IteratorsMD.split(i::NDIndex, V::Val)
-    i, j = Base.IteratorsMD.split(Tuple(i), V)
-    return NDIndex(i), NDIndex(j)
-end
-
-# arithmetic, min/max
-@inline Base.:(-)(@nospecialize(i::NDIndex)) = NDIndex(map(-, Tuple(i)))
-@inline function Base.:(+)(@nospecialize(i1::NDIndex), @nospecialize(i2::NDIndex))
-    NDIndex(map(+, Tuple(i1), Tuple(i2)))
-end
-@inline function Base.:(-)(@nospecialize(i1::NDIndex), @nospecialize(i2::NDIndex))
-    NDIndex(map(-, Tuple(i1), Tuple(i2)))
-end
-@inline function Base.min(@nospecialize(i1::NDIndex), @nospecialize(i2::NDIndex))
-    NDIndex(map(min, Tuple(i1), Tuple(i2)))
-end
-@inline function Base.max(@nospecialize(i1::NDIndex), @nospecialize(i2::NDIndex))
-    NDIndex(map(max, Tuple(i1), Tuple(i2)))
-end
-@inline function Base.:(*)(a::Integer, @nospecialize(i::NDIndex))
-    NDIndex(map(x -> a * x, Tuple(i)))
-end
-@inline Base.:(*)(@nospecialize(i::NDIndex), a::Integer) = *(a, i)
-
-Base.CartesianIndex(@nospecialize(x::NDIndex)) = dynamic(x)
-
-# comparison
-@inline function Base.isless(@nospecialize(x::NDIndex), @nospecialize(y::NDIndex))
-    Bool(_isless(static(0), Tuple(x), Tuple(y)))
-end
-
-function lt(@nospecialize(x::NDIndex), @nospecialize(y::NDIndex))
-    _isless(static(0), Tuple(x), Tuple(y))
-end
 
 _final_isless(c::Int) = c === 1
 _final_isless(::StaticInt{N}) where {N} = static(false)
@@ -551,33 +445,14 @@ _isless(c::C, x::Tuple{}, y::Tuple{}) where {C} = _final_isless(c)
 function _isless(c::C, x::Tuple, y::Tuple) where {C}
     _isless(icmp(c, x, y), Base.front(x), Base.front(y))
 end
-icmp(::StaticInt{0}, x::Tuple, y::Tuple) = icmp(last(x), last(y))
-icmp(::StaticInt{N}, x::Tuple, y::Tuple) where {N} = static(N)
-function icmp(cmp::Int, x::Tuple, y::Tuple)
-    if cmp === 0
-        return icmp(Int(last(x)), Int(last(y)))
-    else
-        return cmp
-    end
-end
-icmp(a, b) = _icmp(lt(a, b), a, b)
-_icmp(x::StaticBool, a, b) = ifelse(x, static(1), __icmp(eq(a, b)))
-_icmp(x::Bool, a, b) = ifelse(x, 1, __icmp(a == b))
-__icmp(x::StaticBool) = ifelse(x, static(0), static(-1))
-__icmp(x::Bool) = ifelse(x, 0, -1)
 
 
-
-function Base.show(io::IO, @nospecialize(x::Union{StaticFloat, StaticSymbol, NDIndex}))
+function Base.show(io::IO, @nospecialize(x::StaticFloat))
     show(io, MIME"text/plain"(), x)
 end
 function Base.show(io::IO, ::MIME"text/plain",
-                   @nospecialize(x::Union{StaticFloat, StaticSymbol}))
+                   @nospecialize(x::StaticFloat))
     print(io, "static(" * repr(known(typeof(x))) * ")")
-end
-function Base.show(io::IO, m::MIME"text/plain", @nospecialize(x::NDIndex))
-    print(io, "NDIndex")
-    show(io, m, Tuple(x))
 end
 
 end
